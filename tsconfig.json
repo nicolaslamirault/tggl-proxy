@@ -1,0 +1,27 @@
+{
+  "compilerOptions": {
+    "target": "es5",
+    "declaration": true,
+    "declarationMap": true,
+    "module": "commonjs",
+    "lib": [
+      "DOM","es6"],
+    "allowJs": false,
+    "sourceMap": true,
+    "outDir": "lib",
+    "rootDir": "src",
+    "strict": true,
+    "noImplicitReturns": true,
+    "downlevelIteration": true,
+    "isolatedModules": true,
+    "alwaysStrict": true,
+    "moduleResolution": "node",
+    "baseUrl": "./",
+    "esModuleInterop": true,
+    "resolveJsonModule": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true
+  },
+  "exclude": ["node_modules", "src/**/*.test.ts"],
+  "include": ["src"]
+}
