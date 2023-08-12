@@ -5,7 +5,7 @@ import compression from 'compression'
 import { TgglLocalClient } from 'tggl-client'
 
 export interface Storage {
-  getConfig(): Promise<string>
+  getConfig(): Promise<string | null>
   setConfig(config: string): Promise<void>
 }
 
@@ -69,6 +69,10 @@ export const createApp = (
     storage
       .getConfig()
       .then((str) => {
+        if (!str) {
+          return
+        }
+
         const config = new Map()
 
         for (const flag of JSON.parse(str)) {
@@ -79,12 +83,12 @@ export const createApp = (
         client.onConfigChange((c) =>
           storage.setConfig(JSON.stringify([...c.values()]))
         )
+        setReady()
       })
       .catch((err) => {
         console.error('Could not fetch config from storage')
         console.error(err)
       })
-      .finally(setReady)
   }
 
   client
