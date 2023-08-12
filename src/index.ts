@@ -12,9 +12,8 @@ export interface Storage {
 export type TgglProxyConfig = {
   url?: string
   apiKey?: string
-  clientKeys?: string[]
+  clientApiKeys?: string[]
   rejectUnauthorized?: boolean
-  clientKeyHeader?: string
   storage?: Storage
   path?: string
   pollingInterval?: number
@@ -34,9 +33,8 @@ export const createApp = (
   {
     url = process.env.TGGL_URL,
     apiKey = process.env.TGGL_API_KEY,
-    clientKeys = process.env.TGGL_CLIENT_KEYS?.split(',') ?? [],
+    clientApiKeys = process.env.TGGL_CLIENT_API_KEYS?.split(',') ?? [],
     rejectUnauthorized = process.env.TGGL_REJECT_UNAUTHORIZED !== 'false',
-    clientKeyHeader = process.env.TGGL_CLIENT_KEY_HEADER ?? 'Authorization',
     storage,
     path = process.env.TGGL_PROXY_PATH ?? '/flags',
     pollingInterval = Number(process.env.TGGL_POLLING_INTERVAL ?? 5000),
@@ -45,7 +43,6 @@ export const createApp = (
   app: Application = express()
 ) => {
   const client = new TgglLocalClient(apiKey as string, { url, pollingInterval })
-  client.fetchConfig().catch((err) => console.error(err))
 
   app.disable('x-powered-by')
   app.use(cors(corsOptions))
@@ -54,7 +51,7 @@ export const createApp = (
 
   if (rejectUnauthorized) {
     app.use((req, res, next) => {
-      if (!clientKeys.includes(req.header(clientKeyHeader) as string)) {
+      if (!clientApiKeys.includes(req.header('x-tggl-api-key') as string)) {
         res.status(401).send('Unauthorized')
         return
       }
@@ -88,9 +85,12 @@ export const createApp = (
         console.error(err)
       })
       .finally(setReady)
-  } else {
-    setReady()
   }
+
+  client
+    .fetchConfig()
+    .catch((err) => console.error(err))
+    .finally(setReady)
 
   app.post(path, async (req, res) => {
     await ready
