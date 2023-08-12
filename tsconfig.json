@@ -1,11 +1,10 @@
 {
   "compilerOptions": {
-    "target": "es5",
+    "target": "es6",
     "declaration": true,
     "declarationMap": true,
     "module": "commonjs",
-    "lib": [
-      "DOM","es6"],
+    "lib": ["es6"],
     "allowJs": false,
     "sourceMap": true,
     "outDir": "lib",
