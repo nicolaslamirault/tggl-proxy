@@ -1,6 +1,6 @@
 {
   "name": "tggl-proxy",
-  "version": "1.0.1",
+  "version": "1.1.0",
   "description": "Tggl Proxy",
   "keywords": [
     "Tggl",
@@ -13,7 +13,7 @@
     "format": "prettier --write src/.",
     "test": "jest --passWithNoTests",
     "prepublishOnly": "npm test && rm -rf lib && npm run build",
-    "prepare": "husky install && npm run build",
+    "prepare": "husky install",
     "version": "npm run format && git add -A src",
     "postversion": "git push && git push --tags"
   },
