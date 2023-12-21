@@ -66,6 +66,10 @@ export const createApp = (
   })
 
   if (storage) {
+    client.onConfigChange((c) =>
+      storage.setConfig(JSON.stringify([...c.values()]))
+    )
+
     storage
       .getConfig()
       .then((str) => {
@@ -80,9 +84,6 @@ export const createApp = (
         }
 
         client.setConfig(config)
-        client.onConfigChange((c) =>
-          storage.setConfig(JSON.stringify([...c.values()]))
-        )
         setReady()
       })
       .catch((err) => {
