@@ -16,6 +16,7 @@ export type TgglProxyConfig = {
   rejectUnauthorized?: boolean
   storage?: Storage
   path?: string
+  healthCheckPath?: string
   pollingInterval?: number
   cors?: CorsOptions
 }
@@ -37,6 +38,7 @@ export const createApp = (
     rejectUnauthorized = process.env.TGGL_REJECT_UNAUTHORIZED !== 'false',
     storage,
     path = process.env.TGGL_PROXY_PATH ?? '/flags',
+    healthCheckPath = process.env.TGGL_HEALTH_CHECK_PATH ?? '/health',
     pollingInterval = Number(process.env.TGGL_POLLING_INTERVAL ?? 5000),
     cors: corsOptions = {},
   }: TgglProxyConfig = {},
@@ -49,30 +51,20 @@ export const createApp = (
   app.use(compression())
   app.use(express.json())
 
-  if (rejectUnauthorized) {
-    app.use((req, res, next) => {
-      if (!clientApiKeys.includes(req.header('x-tggl-api-key') as string)) {
-        res.status(401).send('Unauthorized')
-        return
-      }
+  let configFromStorage = false
+  let configFromClient = false
 
-      next()
-    })
-  }
-
-  let setReady: () => void = () => null
-  const ready = new Promise<void>((resolve) => {
-    setReady = resolve
-  })
+  let ready = Promise.resolve()
 
   if (storage) {
     client.onConfigChange((c) =>
       storage.setConfig(JSON.stringify([...c.values()]))
     )
 
-    storage
-      .getConfig()
-      .then((str) => {
+    ready = ready
+      .then(async () => {
+        const str = await storage.getConfig()
+
         if (!str) {
           return
         }
@@ -84,7 +76,7 @@ export const createApp = (
         }
 
         client.setConfig(config)
-        setReady()
+        configFromStorage = true
       })
       .catch((err) => {
         console.error('Could not fetch config from storage')
@@ -92,12 +84,26 @@ export const createApp = (
       })
   }
 
-  client
-    .fetchConfig()
-    .catch((err) => console.error(err))
-    .finally(setReady)
+  ready = ready
+    .then(async () => {
+      const config = await client.fetchConfig()
 
-  app.post(path, async (req, res) => {
+      if (config) {
+        configFromClient = true
+      }
+    })
+    .catch((err) => console.error(err))
+
+  app.post(path, async (req, res, next) => {
+    if (rejectUnauthorized) {
+      if (!clientApiKeys.includes(req.header('x-tggl-api-key') as string)) {
+        res.status(401).send('Unauthorized')
+        return
+      }
+
+      return next()
+    }
+
     await ready
 
     if (Array.isArray(req.body)) {
@@ -106,6 +112,39 @@ export const createApp = (
       res.send(evalContext(client, req.body))
     }
   })
+
+  if (healthCheckPath === path || healthCheckPath === path + '/') {
+    console.error(
+      'Health check path cannot be the same as the proxy path, health check disabled'
+    )
+  }
+
+  if (
+    healthCheckPath &&
+    healthCheckPath !== path &&
+    healthCheckPath !== path + '/' &&
+    healthCheckPath !== 'false'
+  ) {
+    app.get(healthCheckPath, async (req, res) => {
+      await ready
+
+      if (!configFromStorage && !configFromClient) {
+        res.status(500).send('Could not fetch config from storage or API')
+        return
+      }
+
+      if (!configFromClient) {
+        res
+          .status(200)
+          .send(
+            'Could not fetch config from API, falling back to storage but may be stale'
+          )
+        return
+      }
+
+      res.status(200).send('OK')
+    })
+  }
 
   return app
 }
