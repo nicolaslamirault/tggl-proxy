@@ -3,6 +3,7 @@ import express, { Application } from 'express'
 import cors, { CorsOptions } from 'cors'
 import compression from 'compression'
 import { TgglLocalClient } from 'tggl-client'
+import promClient from 'prom-client'
 
 export interface Storage {
   getConfig(): Promise<string | null>
@@ -17,9 +18,12 @@ export type TgglProxyConfig = {
   storage?: Storage
   path?: string
   healthCheckPath?: string
+  metricsPath?: string
   pollingInterval?: number
   cors?: CorsOptions
 }
+
+promClient.collectDefaultMetrics()
 
 const evalContext = (client: TgglLocalClient, context: any) => {
   const config = client.getConfig()
@@ -39,6 +43,7 @@ export const createApp = (
     storage,
     path = process.env.TGGL_PROXY_PATH ?? '/flags',
     healthCheckPath = process.env.TGGL_HEALTH_CHECK_PATH ?? '/health',
+    metricsPath = process.env.TGGL_METRICS_PATH ?? '/metrics',
     pollingInterval = Number(process.env.TGGL_POLLING_INTERVAL ?? 5000),
     cors: corsOptions = {},
   }: TgglProxyConfig = {},
@@ -113,18 +118,7 @@ export const createApp = (
     }
   })
 
-  if (healthCheckPath === path || healthCheckPath === path + '/') {
-    console.error(
-      'Health check path cannot be the same as the proxy path, health check disabled'
-    )
-  }
-
-  if (
-    healthCheckPath &&
-    healthCheckPath !== path &&
-    healthCheckPath !== path + '/' &&
-    healthCheckPath !== 'false'
-  ) {
+  if (healthCheckPath && healthCheckPath !== 'false') {
     app.get(healthCheckPath, async (req, res) => {
       await ready
 
@@ -143,6 +137,17 @@ export const createApp = (
       }
 
       res.status(200).send('OK')
+    })
+  }
+
+  if (metricsPath && metricsPath !== 'false') {
+    app.get(metricsPath, async (req, res) => {
+      try {
+        res.set('Content-Type', promClient.register.contentType)
+        res.end(await promClient.register.metrics())
+      } catch (err) {
+        res.status(500).end(err)
+      }
     })
   }
 
