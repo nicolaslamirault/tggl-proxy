@@ -1,6 +1,6 @@
 {
   "name": "tggl-proxy",
-  "version": "1.3.0",
+  "version": "1.3.1",
   "description": "Tggl Proxy",
   "keywords": [
     "Tggl",
@@ -16,7 +16,7 @@
     "prepare": "husky install",
     "version": "npm run format && git add -A src",
     "postversion": "git push && git push --tags",
-    "publishDocker": "docker buildx build . --platform linux/amd64,linux/arm64 -t tggl/tggl-proxy:1.3.0 -t tggl/tggl-proxy:latest --push"
+    "publishDocker": "docker buildx build . --platform linux/amd64,linux/arm64 -t tggl/tggl-proxy:1.3.1 -t tggl/tggl-proxy:latest --push"
   },
   "lint-staged": {
     "**/*": "prettier --write --ignore-unknown"

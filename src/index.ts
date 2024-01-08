@@ -123,7 +123,7 @@ export const createApp = (
       await ready
 
       if (!configFromStorage && !configFromClient) {
-        res.status(500).send('Could not fetch config from storage or API')
+        res.status(503).send('Could not fetch config from storage or API')
         return
       }
 
