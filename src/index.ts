@@ -99,14 +99,22 @@ export const createApp = (
     })
     .catch((err) => console.error(err))
 
-  app.post(path, async (req, res, next) => {
+  app.post(path, async (req, res) => {
     if (rejectUnauthorized) {
-      if (!clientApiKeys.includes(req.header('x-tggl-api-key') as string)) {
-        res.status(401).send('Unauthorized')
+      if (!clientApiKeys.length) {
+        res.status(401).json({
+          error:
+            'rejectUnauthorized is set to true but no clientApiKeys is provided, all requests will end in a 401. ' +
+            'Either set rejectUnauthorized to false or provide a list of clientApiKeys. ' +
+            'More information: https://tggl.io/developers/evaluating-flags/tggl-proxy#security',
+        })
         return
       }
 
-      return next()
+      if (!clientApiKeys.includes(req.header('x-tggl-api-key') as string)) {
+        res.status(401).json({ error: 'Unauthorized' })
+        return
+      }
     }
 
     await ready
@@ -150,6 +158,11 @@ export const createApp = (
       }
     })
   }
+
+  app.use((req, res) => {
+    res.status(404)
+    res.json({ error: 'Not found' })
+  })
 
   return app
 }
