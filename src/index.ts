@@ -4,6 +4,7 @@ import cors, { CorsOptions } from 'cors'
 import compression from 'compression'
 import { TgglLocalClient } from 'tggl-client'
 import promClient from 'prom-client'
+import { Reporting } from './reporting'
 
 export interface Storage {
   getConfig(): Promise<string | null>
@@ -25,7 +26,13 @@ export type TgglProxyConfig = {
 
 promClient.collectDefaultMetrics()
 
-const evalContext = (client: TgglLocalClient, context: any) => {
+const evalContext = (
+  client: TgglLocalClient,
+  context: any,
+  reporting: Reporting
+) => {
+  reporting.reportContext(context)
+
   const config = client.getConfig()
 
   return [...config.keys()].reduce((acc, cur) => {
@@ -50,6 +57,7 @@ export const createApp = (
   app: Application = express()
 ) => {
   const client = new TgglLocalClient(apiKey as string, { url, pollingInterval })
+  const reporting = new Reporting(apiKey as string)
 
   app.disable('x-powered-by')
   app.use(cors(corsOptions))
@@ -120,9 +128,11 @@ export const createApp = (
     await ready
 
     if (Array.isArray(req.body)) {
-      res.send(req.body.map((context) => evalContext(client, context)))
+      res.send(
+        req.body.map((context) => evalContext(client, context, reporting))
+      )
     } else {
-      res.send(evalContext(client, req.body))
+      res.send(evalContext(client, req.body, reporting))
     }
   })
 

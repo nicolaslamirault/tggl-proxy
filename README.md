@@ -1,3 +1,3 @@
 # Tggl Proxy
 
-[Read documentation](https://doc.tggl.io/docs/developers/sdks/node)
+[Read documentation](https://tggl.io/developers/evaluating-flags/tggl-proxy)
