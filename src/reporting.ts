@@ -53,7 +53,7 @@ export class Reporting {
     this.receivedValues = {}
 
     if (Object.keys(receivedProperties).length) {
-      await fetch('http://localhost:3008/report', {
+      await fetch('https://api.tggl.io/report', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -81,7 +81,7 @@ export class Reporting {
       }, [] as string[][])
 
       for (let i = 0; i < data.length; i += 2000) {
-        await fetch('http://localhost:3008/report', {
+        await fetch('https://api.tggl.io/report', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
