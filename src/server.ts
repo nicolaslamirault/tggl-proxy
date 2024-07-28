@@ -2,6 +2,7 @@ import { createApp } from './index'
 import fs from 'fs/promises'
 import { createClient } from 'redis'
 import { PostgresStorage } from './storage/pg'
+import winston from 'winston'
 
 const REDIS_URL = process.env.REDIS_URL
 
@@ -29,6 +30,19 @@ const initRedis = async () => {
   }
 }
 
+const logger = winston.createLogger({
+  level: 'info',
+  format: winston.format.combine(
+    winston.format.timestamp(),
+    winston.format.json()
+  ),
+  transports: [
+    new winston.transports.Console({
+      format: winston.format.simple(),
+    }),
+  ],
+})
+
 createApp({
   storage: {
     async getConfig(): Promise<string | null> {
@@ -36,13 +50,13 @@ createApp({
         try {
           const value = await pgClient.getConfig()
 
-          console.log(
+          logger.info(
             `Fetched config from Postgres${value ? '' : ' (nothing yet)'}`
           )
 
           return value
         } catch (error) {
-          console.error(String(error))
+          logger.error(`Failed to fetch config from Postgres: ${error}`)
         }
       }
 
@@ -51,25 +65,36 @@ createApp({
           await initRedis()
           const value = await redisClient!.get('tggl_flags')
 
-          console.log(
-            `Fetched config from redis${value ? '' : ' (nothing yet)'}`
+          logger.info(
+            `Fetched config from Redis${value ? '' : ' (nothing yet)'}`
           )
 
           return value
         } catch (error) {
-          console.error(`Failed to fetch config from redis: ${error}`)
+          logger.error(`Failed to fetch config from Redis: ${error}`)
         }
       }
 
-      return fs.readFile('./config.json', 'utf8').catch(() => null)
+      return fs
+        .readFile('./config.json', 'utf8')
+        .then((value) => {
+          logger.info(
+            `Fetched config from file${value ? '' : ' (nothing yet)'}`
+          )
+          return value
+        })
+        .catch((error) => {
+          logger.error(`Failed to fetch config from file: ${error}`)
+          return null
+        })
     },
     async setConfig(config: string): Promise<void> {
       if (pgClient.enabled()) {
         try {
           await pgClient.setConfig(config)
-          console.log(`Wrote config to Postgres`)
+          logger.info(`Saved config in Postgres`)
         } catch (error) {
-          console.error(String(error))
+          logger.error(String(error))
         }
       }
 
@@ -77,13 +102,19 @@ createApp({
         try {
           await initRedis()
           await redisClient!.set('tggl_flags', config)
-          console.log(`Wrote config to redis`)
+          logger.info(`Saved config in Redis`)
         } catch (error) {
-          console.error(`Failed to write config to redis: ${error}`)
+          logger.error(`Failed to save config in Redis: ${error}`)
         }
       }
 
-      await fs.writeFile('./config.json', config)
+      await fs
+        .writeFile('./config.json', config)
+        .then(() => logger.info(`Saved config in file`))
+        .catch((error) =>
+          logger.error(`Failed to save config in file: ${error}`)
+        )
     },
   },
-}).listen(3000, () => console.log('Tggl proxy ready!'))
+  logger,
+}).listen(3000, () => logger.info('Tggl proxy ready', { port: 3000 }))

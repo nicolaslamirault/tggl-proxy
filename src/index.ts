@@ -1,30 +1,19 @@
 import * as process from 'process'
 import express, { Application } from 'express'
-import cors, { CorsOptions } from 'cors'
+import cors from 'cors'
 import compression from 'compression'
 import { TgglLocalClient } from 'tggl-client'
 import promClient from 'prom-client'
 import { Reporting } from './reporting'
-
-export interface Storage {
-  getConfig(): Promise<string | null>
-  setConfig(config: string): Promise<void>
-}
-
-export type TgglProxyConfig = {
-  url?: string
-  apiKey?: string
-  clientApiKeys?: string[]
-  rejectUnauthorized?: boolean
-  storage?: Storage
-  path?: string
-  healthCheckPath?: string
-  metricsPath?: string
-  pollingInterval?: number
-  cors?: CorsOptions
-}
+import { TgglProxyConfig } from './types'
+import winston from 'winston'
 
 promClient.collectDefaultMetrics()
+
+const allRequestsRejected =
+  'rejectUnauthorized is set to true but no clientApiKeys is provided, all requests will end in a 401. ' +
+  'Either set rejectUnauthorized to false or provide a list of clientApiKeys. ' +
+  'More information: https://tggl.io/developers/evaluating-flags/tggl-proxy#security'
 
 const evalContext = (
   client: TgglLocalClient,
@@ -53,16 +42,61 @@ export const createApp = (
     metricsPath = process.env.TGGL_METRICS_PATH ?? '/metrics',
     pollingInterval = Number(process.env.TGGL_POLLING_INTERVAL ?? 5000),
     cors: corsOptions = {},
+    logger = winston.createLogger({
+      level: 'info',
+      format: winston.format.combine(
+        winston.format.timestamp(),
+        winston.format.json()
+      ),
+      transports: [
+        new winston.transports.Console({
+          format: winston.format.simple(),
+        }),
+      ],
+    }),
   }: TgglProxyConfig = {},
   app: Application = express()
 ) => {
-  const client = new TgglLocalClient(apiKey as string, { url, pollingInterval })
+  const client = new TgglLocalClient(apiKey as string, {
+    url,
+    pollingInterval,
+    log: false,
+  })
   const reporting = new Reporting(apiKey as string)
+
+  client.onFetchSuccessful(() => {
+    logger?.info('Fetched config from API')
+  })
+
+  client.onFetchFail((error) => {
+    logger?.error('Failed to fetch config from API', { error })
+  })
+
+  if (rejectUnauthorized && !clientApiKeys.length) {
+    logger?.error(allRequestsRejected)
+  }
 
   app.disable('x-powered-by')
   app.use(cors(corsOptions))
   app.use(compression())
   app.use(express.json())
+  app.use((req, res, next) => {
+    const start = process.hrtime()
+
+    res.on('finish', () => {
+      const diff = process.hrtime(start)
+      const duration = Number((diff[0] * 1e3 + diff[1] * 1e-6).toFixed(2))
+      logger?.info('Request', {
+        duration,
+        method: req.method,
+        url: req.originalUrl,
+        status: res.statusCode,
+        body: req.body,
+      })
+    })
+
+    next()
+  })
 
   let configFromStorage = false
   let configFromClient = false
@@ -91,31 +125,23 @@ export const createApp = (
         client.setConfig(config)
         configFromStorage = true
       })
-      .catch((err) => {
-        console.error('Could not fetch config from storage')
-        console.error(err)
+      .catch((error) => {
+        logger?.error('Failed to fetch config from cache', { error })
       })
   }
 
-  ready = ready
-    .then(async () => {
-      const config = await client.fetchConfig()
+  ready = ready.then(async () => {
+    const config = await client.fetchConfig().catch(() => null)
 
-      if (config) {
-        configFromClient = true
-      }
-    })
-    .catch((err) => console.error(err))
+    if (config) {
+      configFromClient = true
+    }
+  })
 
   app.post(path, async (req, res) => {
     if (rejectUnauthorized) {
       if (!clientApiKeys.length) {
-        res.status(401).json({
-          error:
-            'rejectUnauthorized is set to true but no clientApiKeys is provided, all requests will end in a 401. ' +
-            'Either set rejectUnauthorized to false or provide a list of clientApiKeys. ' +
-            'More information: https://tggl.io/developers/evaluating-flags/tggl-proxy#security',
-        })
+        res.status(401).json({ error: allRequestsRejected })
         return
       }
 
