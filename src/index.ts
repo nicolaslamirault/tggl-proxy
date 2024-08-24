@@ -4,7 +4,6 @@ import cors from 'cors'
 import compression from 'compression'
 import { TgglLocalClient } from 'tggl-client'
 import promClient from 'prom-client'
-import { Reporting } from './reporting'
 import { TgglProxyConfig } from './types'
 import winston from 'winston'
 
@@ -14,21 +13,6 @@ const allRequestsRejected =
   'rejectUnauthorized is set to true but no clientApiKeys is provided, all requests will end in a 401. ' +
   'Either set rejectUnauthorized to false or provide a list of clientApiKeys. ' +
   'More information: https://tggl.io/developers/evaluating-flags/tggl-proxy#security'
-
-const evalContext = (
-  client: TgglLocalClient,
-  context: any,
-  reporting: Reporting
-) => {
-  reporting.reportContext(context)
-
-  const config = client.getConfig()
-
-  return [...config.keys()].reduce((acc, cur) => {
-    acc[cur] = client.get(context, cur)
-    return acc
-  }, {} as Record<string, any>)
-}
 
 export const createApp = (
   {
@@ -62,7 +46,6 @@ export const createApp = (
     pollingInterval,
     log: false,
   })
-  const reporting = new Reporting(apiKey as string)
 
   client.onFetchSuccessful(() => {
     logger?.info('Fetched config from API')
@@ -154,11 +137,9 @@ export const createApp = (
     await ready
 
     if (Array.isArray(req.body)) {
-      res.send(
-        req.body.map((context) => evalContext(client, context, reporting))
-      )
+      res.send(req.body.map((context) => client.getActiveFlags(context)))
     } else {
-      res.send(evalContext(client, req.body, reporting))
+      res.send(client.getActiveFlags(req.body))
     }
   })
 
