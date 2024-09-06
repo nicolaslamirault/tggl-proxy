@@ -14,17 +14,29 @@ const allRequestsRejected =
   'Either set rejectUnauthorized to false or provide a list of clientApiKeys. ' +
   'More information: https://tggl.io/developers/evaluating-flags/tggl-proxy#security'
 
+const stripSpecialCharacters = (str?: string) =>
+  str?.replace(/[^\x20-\x7E]/g, '')
+
 export const createApp = (
   {
-    url = process.env.TGGL_URL,
-    apiKey = process.env.TGGL_API_KEY,
-    clientApiKeys = process.env.TGGL_CLIENT_API_KEYS?.split(',') ?? [],
-    rejectUnauthorized = process.env.TGGL_REJECT_UNAUTHORIZED !== 'false',
+    url = stripSpecialCharacters(process.env.TGGL_URL),
+    apiKey = stripSpecialCharacters(process.env.TGGL_API_KEY),
+    clientApiKeys = stripSpecialCharacters(
+      process.env.TGGL_CLIENT_API_KEYS
+    )?.split(',') ?? [],
+    rejectUnauthorized = stripSpecialCharacters(
+      process.env.TGGL_REJECT_UNAUTHORIZED
+    ) !== 'false',
     storage,
-    path = process.env.TGGL_PROXY_PATH ?? '/flags',
-    healthCheckPath = process.env.TGGL_HEALTH_CHECK_PATH ?? '/health',
-    metricsPath = process.env.TGGL_METRICS_PATH ?? '/metrics',
-    pollingInterval = Number(process.env.TGGL_POLLING_INTERVAL ?? 5000),
+    path = stripSpecialCharacters(process.env.TGGL_PROXY_PATH) ?? '/flags',
+    healthCheckPath = stripSpecialCharacters(
+      process.env.TGGL_HEALTH_CHECK_PATH
+    ) ?? '/health',
+    metricsPath = stripSpecialCharacters(process.env.TGGL_METRICS_PATH) ??
+      '/metrics',
+    pollingInterval = Number(
+      stripSpecialCharacters(process.env.TGGL_POLLING_INTERVAL) ?? 5000
+    ),
     cors: corsOptions = {},
     logger = winston.createLogger({
       level: 'info',
