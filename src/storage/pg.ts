@@ -1,4 +1,5 @@
 import { Client } from 'pg'
+import { Storage } from '../types'
 
 export type PostgresErrorCode =
   | 'FAILED_TO_CONNECT'
@@ -18,24 +19,18 @@ export class PostgresError extends Error {
   }
 }
 
-export class PostgresStorage {
-  private client: Client | null = null
+export class PostgresStorage implements Storage {
+  private client: Client
   private ready: Promise<void>
+  public name = 'Postgres'
 
-  constructor(connectionString?: string) {
-    if (connectionString) {
-      this.client = new Client({ connectionString })
-    }
-
+  constructor(connectionString: string) {
+    this.client = new Client({ connectionString })
     this.ready = this.init()
     this.ready.catch(() => null)
   }
 
   private async init() {
-    if (!this.client) {
-      throw new Error('No connection string provided')
-    }
-
     try {
       await this.client.connect()
     } catch (error) {
@@ -59,21 +54,38 @@ export class PostgresStorage {
     }
   }
 
-  enabled() {
-    return Boolean(this.client)
-  }
-
   async getConfig() {
     try {
       await this.ready
 
-      const config = await this.client!.query(
-        `SELECT "value"
+      const result = await this.client.query(
+        `SELECT "key", "value"
          FROM "tggl_config"
-         WHERE "key" = 'flags';`
+         WHERE "key" IN ('flags', 'syncDate');`
       )
 
-      return config.rows[0]?.value ?? null
+      const response = {
+        config: null as string | null,
+        syncDate: new Date(),
+      }
+
+      for (const { key, value } of result.rows) {
+        if (key === 'flags') {
+          response.config = value
+        }
+        if (key === 'syncDate' && value !== null && value.match(/^[0-9]+$/)) {
+          response.syncDate = new Date(Number(value))
+        }
+      }
+
+      if (response.config === null) {
+        throw new Error('Successfully connected, but no config found')
+      }
+
+      return response as {
+        config: string
+        syncDate: Date
+      }
     } catch (error) {
       throw new PostgresError(
         'FAILED_TO_FETCH_CONFIG',
@@ -83,13 +95,29 @@ export class PostgresStorage {
     }
   }
 
-  async setConfig(config: string) {
+  async setConfig(config: string, syncDate: Date) {
     try {
       await this.ready
-      await this.client!.query(
-        `INSERT INTO "tggl_config" ("key", "value") VALUES ( 'flags', $1) ON CONFLICT ("key") DO UPDATE SET "value" = EXCLUDED."value";`,
-        [config]
+      await this.client.query('BEGIN;')
+      const result = await this.client.query(
+        `SELECT value FROM "tggl_config" WHERE "key" = 'syncDate' FOR UPDATE;`
       )
+
+      if (
+        result.rows.length &&
+        result.rows[0].value !== null &&
+        result.rows[0].value.match(/^[0-9]+$/) &&
+        syncDate.getTime() <= Number(result.rows[0].value)
+      ) {
+        await this.client.query('COMMIT;')
+        return
+      }
+
+      await this.client.query(
+        `INSERT INTO "tggl_config" ("key", "value") VALUES ( 'flags', $1), ( 'syncDate', $2) ON CONFLICT ("key") DO UPDATE SET "value" = EXCLUDED."value";`,
+        [config, String(syncDate.getTime())]
+      )
+      await this.client.query('COMMIT;')
     } catch (error) {
       throw new PostgresError(
         'FAILED_TO_WRITE_CONFIG',

@@ -2,8 +2,9 @@ import { CorsOptions } from 'cors'
 import { Logger } from 'winston'
 
 export interface Storage {
-  getConfig(): Promise<string | null>
-  setConfig(config: string): Promise<void>
+  name: string
+  getConfig(): Promise<{ config: string; syncDate: Date }>
+  setConfig(config: string, syncDate: Date): Promise<void>
 }
 
 export type TgglProxyConfig = {
@@ -11,11 +12,14 @@ export type TgglProxyConfig = {
   apiKey?: string
   clientApiKeys?: string[]
   rejectUnauthorized?: boolean
-  storage?: Storage
+  storages?: Storage[]
   path?: string
+  reportPath?: string
   healthCheckPath?: string
   metricsPath?: string
   pollingInterval?: number
+  maxConfigAge?: number
+  maxStartupTime?: number
   cors?: CorsOptions
   logger?: Logger
 }

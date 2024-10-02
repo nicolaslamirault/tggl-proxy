@@ -17,6 +17,14 @@ const allRequestsRejected =
 const stripSpecialCharacters = (str?: string) =>
   str?.replace(/[^\x20-\x7E]/g, '')
 
+const formatError = (error: any) => {
+  if (error instanceof Error) {
+    return error.message
+  }
+
+  return error
+}
+
 export const createApp = (
   {
     url = stripSpecialCharacters(process.env.TGGL_URL),
@@ -27,15 +35,23 @@ export const createApp = (
     rejectUnauthorized = stripSpecialCharacters(
       process.env.TGGL_REJECT_UNAUTHORIZED
     ) !== 'false',
-    storage,
+    storages = [],
     path = stripSpecialCharacters(process.env.TGGL_PROXY_PATH) ?? '/flags',
+    reportPath = stripSpecialCharacters(process.env.TGGL_REPORT_PATH) ??
+      '/report',
     healthCheckPath = stripSpecialCharacters(
       process.env.TGGL_HEALTH_CHECK_PATH
     ) ?? '/health',
     metricsPath = stripSpecialCharacters(process.env.TGGL_METRICS_PATH) ??
       '/metrics',
     pollingInterval = Number(
-      stripSpecialCharacters(process.env.TGGL_POLLING_INTERVAL) ?? 5000
+      stripSpecialCharacters(process.env.TGGL_POLLING_INTERVAL) ?? 5_000
+    ),
+    maxConfigAge = Number(
+      stripSpecialCharacters(process.env.TGGL_MAX_CONFIG_AGE) ?? 30_000
+    ),
+    maxStartupTime = Number(
+      stripSpecialCharacters(process.env.TGGL_MAX_STARTUP_TIME) ?? 10_000
     ),
     cors: corsOptions = {},
     logger = winston.createLogger({
@@ -55,16 +71,7 @@ export const createApp = (
 ) => {
   const client = new TgglLocalClient(apiKey as string, {
     url,
-    pollingInterval,
     log: false,
-  })
-
-  client.onFetchSuccessful(() => {
-    logger?.info('Fetched config from API')
-  })
-
-  client.onFetchFail((error) => {
-    logger?.error('Failed to fetch config from API', { error })
   })
 
   if (rejectUnauthorized && !clientApiKeys.length) {
@@ -93,44 +100,217 @@ export const createApp = (
     next()
   })
 
-  let configFromStorage = false
-  let configFromClient = false
+  const updateConfig = async (
+    previousConfig: Map<string, any> | null,
+    newConfig: Map<string, any>,
+    syncDate: Date,
+    source?: string
+  ) => {
+    client.setConfig(newConfig)
 
-  let ready = Promise.resolve()
+    if (previousConfig) {
+      const newFlags: string[] = []
+      const deletedFlags: string[] = []
+      const updatedFlags: string[] = []
 
-  if (storage) {
-    client.onConfigChange((c) =>
-      storage.setConfig(JSON.stringify([...c.values()]))
-    )
+      for (const [slug, flag] of newConfig) {
+        if (!previousConfig.has(slug)) {
+          newFlags.push(slug)
+        } else if (
+          JSON.stringify(previousConfig.get(slug)) !== JSON.stringify(flag)
+        ) {
+          updatedFlags.push(slug)
+        }
+      }
 
-    ready = ready
-      .then(async () => {
-        const str = await storage.getConfig()
+      for (const slug of previousConfig.keys()) {
+        if (!newConfig.has(slug)) {
+          deletedFlags.push(slug)
+        }
+      }
 
-        if (!str) {
-          return
+      if (newFlags.length || deletedFlags.length || updatedFlags.length) {
+        logger?.info('Config has changed', {
+          newFlags,
+          deletedFlags,
+          updatedFlags,
+        })
+      } else {
+        logger?.info('Config has not changed')
+      }
+    }
+
+    if (storages.length > (source ? 1 : 0)) {
+      logger?.info('Saving config and sync date to storage')
+
+      for (const storage of storages) {
+        if (source === storage.name) {
+          continue
         }
 
-        const config = new Map()
+        const result = await storage
+          .setConfig(JSON.stringify([...newConfig.values()]), syncDate)
+          .then(() => ({ success: true as const }))
+          .catch((error) => ({ success: false as const, error }))
 
-        for (const flag of JSON.parse(str)) {
-          config.set(flag.slug, flag)
+        if (result.success) {
+          logger?.info(
+            `Successfully saved config and sync date to ${storage.name}`
+          )
+        } else {
+          logger?.error(
+            `Failed to save config and sync date to ${storage.name}`,
+            {
+              error: formatError(result.error),
+            }
+          )
         }
-
-        client.setConfig(config)
-        configFromStorage = true
-      })
-      .catch((error) => {
-        logger?.error('Failed to fetch config from cache', { error })
-      })
+      }
+    } else if (!storages.length) {
+      logger?.info('No storage provided to save config and sync date')
+    }
   }
 
-  ready = ready.then(async () => {
-    const config = await client.fetchConfig().catch(() => null)
+  let lastSuccessfulSync: Date | null = null
+  const fetchConfig = async (): Promise<boolean> => {
+    const previousConfig = lastSuccessfulSync
+      ? new Map(client.getConfig())
+      : null
+    const result = await client
+      .fetchConfig()
+      .then((config) => ({ success: true as const, config }))
+      .catch((error) => ({ success: false as const, error }))
 
-    if (config) {
-      configFromClient = true
+    if (result.success) {
+      logger?.info('Successfully fetched config from API')
+      lastSuccessfulSync = new Date()
+
+      await updateConfig(previousConfig, result.config, lastSuccessfulSync)
+      return true
     }
+
+    logger?.error('Failed to fetch config from API', {
+      error: formatError(result.error),
+    })
+
+    for (const storage of storages) {
+      logger?.info(`Falling back to ${storage.name} storage`)
+
+      const config = await storage
+        .getConfig()
+        .then((config) => ({ success: true as const, config }))
+        .catch((error) => ({ success: false as const, error }))
+
+      if (config.success) {
+        if (
+          !lastSuccessfulSync ||
+          config.config.syncDate > lastSuccessfulSync
+        ) {
+          logger?.info(
+            `Successfully fetched a more recent config from ${storage.name} compared to last successful sync`,
+            {
+              lastSuccessfulSync,
+              storageSyncDate: config.config.syncDate,
+            }
+          )
+          lastSuccessfulSync = new Date(config.config.syncDate)
+
+          const c = new Map()
+
+          for (const flag of JSON.parse(config.config.config)) {
+            c.set(flag.slug, flag)
+          }
+
+          await updateConfig(
+            previousConfig,
+            c,
+            config.config.syncDate,
+            storage.name
+          )
+          return true
+        } else {
+          logger?.error(
+            `Successfully fetched config from ${storage.name} but that config is less recent than last successful sync`,
+            {
+              lastSuccessfulSync,
+              storageSyncDate: config.config.syncDate,
+            }
+          )
+        }
+      } else {
+        logger?.error(`Failed to fetch config from ${storage.name}`, {
+          error: formatError(config.error),
+        })
+      }
+    }
+
+    if (storages?.length) {
+      logger?.error(
+        `Failed to fetch config from API and all provided storages, will keep polling`
+      )
+    } else {
+      logger?.error(`No storage provided to fall back to, will keep polling`, {
+        configAge: lastSuccessfulSync
+          ? Date.now() - lastSuccessfulSync.getTime()
+          : null,
+      })
+    }
+
+    return false
+  }
+
+  let ready = new Promise<void>(async (resolve) => {
+    if (!storages?.length) {
+      logger?.info(
+        'No storage provided, only relying on the API. Providing a storage allows for faster startup times and more redundancy in case of network failure.'
+      )
+    } else {
+      logger?.info('Storage provided', {
+        storage: storages.map((storage) => storage.name),
+      })
+    }
+
+    const startedAt = Date.now()
+    const RETRY_INTERVAL = 500
+    let tries = 0
+
+    logger?.info(
+      'Initial config syncing started. All requests will be pending until a successful sync or after the allowed startup time has passed.',
+      { maxStartupTime }
+    )
+
+    while (Date.now() - startedAt < maxStartupTime) {
+      const success = await fetchConfig()
+      tries++
+
+      if (success) {
+        logger?.info(
+          'Initial config synced successfully, ready to serve requests',
+          {
+            startupTime: Date.now() - startedAt,
+            numberOfTries: tries,
+          }
+        )
+        return resolve()
+      }
+      await new Promise((resolve) => setTimeout(resolve, RETRY_INTERVAL))
+    }
+
+    logger?.info(
+      'Could not sync config within the allowed startup time. Starting to serve requests using an empty config (no flags), and polling until the config can be synced.',
+      { maxStartupTime, numberOfTries: tries }
+    )
+    return resolve()
+  })
+
+  const poll = async () => {
+    await fetchConfig()
+    setTimeout(poll, pollingInterval)
+  }
+
+  ready.then(async () => {
+    logger?.info('Start polling for config updates', { pollingInterval })
+    await poll()
   })
 
   app.post(path, async (req, res) => {
@@ -159,16 +339,17 @@ export const createApp = (
     app.get(healthCheckPath, async (req, res) => {
       await ready
 
-      if (!configFromStorage && !configFromClient) {
-        res.status(503).send('Could not fetch config from storage or API')
-        return
-      }
+      const configAge = lastSuccessfulSync
+        ? Date.now() - lastSuccessfulSync.getTime()
+        : null
 
-      if (!configFromClient) {
+      if (!configAge || configAge > maxConfigAge) {
         res
-          .status(200)
+          .status(503)
           .send(
-            'Could not fetch config from API, falling back to storage but may be stale'
+            configAge
+              ? 'Last successful config sync is too old'
+              : 'No successful config sync yet'
           )
         return
       }
@@ -178,6 +359,18 @@ export const createApp = (
   }
 
   if (metricsPath && metricsPath !== 'false') {
+    new promClient.Gauge({
+      name: 'config_age_milliseconds',
+      help: 'The age in milliseconds of the last successful config sync. 999_999_999 means that the config was never successfully synced.',
+      collect() {
+        if (lastSuccessfulSync !== null) {
+          this.set(Date.now() - lastSuccessfulSync.getTime())
+        } else {
+          this.set(999_999_999)
+        }
+      },
+    })
+
     app.get(metricsPath, async (req, res) => {
       try {
         res.set('Content-Type', promClient.register.contentType)
