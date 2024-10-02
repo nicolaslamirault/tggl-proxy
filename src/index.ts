@@ -6,6 +6,7 @@ import { TgglLocalClient } from 'tggl-client'
 import promClient from 'prom-client'
 import { TgglProxyConfig } from './types'
 import winston from 'winston'
+import { ReportingAggregator } from './ReportingAggregator'
 
 promClient.collectDefaultMetrics()
 
@@ -378,6 +379,15 @@ export const createApp = (
       } catch (err) {
         res.status(500).end(err)
       }
+    })
+  }
+
+  if (reportPath && reportPath !== 'false') {
+    const aggregator = new ReportingAggregator({ apiKey: apiKey as string })
+
+    app.post(reportPath, async (req, res) => {
+      aggregator.ingestReport(req.body)
+      res.send({ success: true })
     })
   }
 
