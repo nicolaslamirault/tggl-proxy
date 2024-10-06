@@ -1,5 +1,4 @@
 import { createApp } from './index'
-import { PostgresStorage } from './storage/pg'
 import winston from 'winston'
 
 const logger = winston.createLogger({
@@ -15,9 +14,4 @@ const logger = winston.createLogger({
   ],
 })
 
-createApp({
-  storages: process.env.POSTGRES_URL
-    ? [new PostgresStorage(process.env.POSTGRES_URL)]
-    : [],
-  logger,
-}).listen(3000, () => null)
+createApp({ logger }).listen(3000, () => null)

@@ -4,9 +4,15 @@ import cors from 'cors'
 import compression from 'compression'
 import { TgglLocalClient } from 'tggl-client'
 import promClient from 'prom-client'
-import { TgglProxyConfig } from './types'
+import { Storage, TgglProxyConfig } from './types'
 import winston from 'winston'
 import { ReportingAggregator } from './ReportingAggregator'
+import { RedisStorage } from './storage/redis'
+import { PostgresStorage } from './storage/pg'
+
+export type { Storage, TgglProxyConfig } from './types'
+export { PostgresStorage } from './storage/pg'
+export { RedisStorage } from './storage/redis'
 
 promClient.collectDefaultMetrics()
 
@@ -36,7 +42,7 @@ export const createApp = (
     rejectUnauthorized = stripSpecialCharacters(
       process.env.TGGL_REJECT_UNAUTHORIZED
     ) !== 'false',
-    storages = [],
+    storages: rawStorages,
     path = stripSpecialCharacters(process.env.TGGL_PROXY_PATH) ?? '/flags',
     reportPath = stripSpecialCharacters(process.env.TGGL_REPORT_PATH) ??
       '/report',
@@ -70,6 +76,15 @@ export const createApp = (
   }: TgglProxyConfig = {},
   app: Application = express()
 ) => {
+  const storages =
+    rawStorages ??
+    ([
+      process.env.POSTGRES_URL
+        ? new PostgresStorage(process.env.POSTGRES_URL)
+        : null,
+      process.env.REDIS_URL ? new RedisStorage(process.env.REDIS_URL) : null,
+    ].filter(Boolean) as Storage[])
+
   const client = new TgglLocalClient(apiKey as string, {
     url,
     log: false,
@@ -199,7 +214,24 @@ export const createApp = (
 
       const config = await storage
         .getConfig()
-        .then((config) => ({ success: true as const, config }))
+        .then((config) => {
+          try {
+            const c = new Map()
+
+            for (const flag of JSON.parse(config.config)) {
+              c.set(flag.slug, flag)
+            }
+
+            return {
+              success: true as const,
+              config: { config: c, syncDate: config.syncDate },
+            }
+          } catch (error) {
+            throw new Error(
+              `Successfully fetched config from ${storage.name} but could not parse the value`
+            )
+          }
+        })
         .catch((error) => ({ success: false as const, error }))
 
       if (config.success) {
@@ -216,15 +248,9 @@ export const createApp = (
           )
           lastSuccessfulSync = new Date(config.config.syncDate)
 
-          const c = new Map()
-
-          for (const flag of JSON.parse(config.config.config)) {
-            c.set(flag.slug, flag)
-          }
-
           await updateConfig(
             previousConfig,
-            c,
+            config.config.config,
             config.config.syncDate,
             storage.name
           )
