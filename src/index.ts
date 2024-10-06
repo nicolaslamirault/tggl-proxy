@@ -2,13 +2,13 @@ import * as process from 'process'
 import express, { Application } from 'express'
 import cors from 'cors'
 import compression from 'compression'
-import { TgglLocalClient } from 'tggl-client'
+import { TgglConfig, TgglLocalClient, TgglReporting } from 'tggl-client'
 import promClient from 'prom-client'
 import { Storage, TgglProxyConfig } from './types'
 import winston from 'winston'
-import { ReportingAggregator } from './ReportingAggregator'
 import { RedisStorage } from './storage/redis'
 import { PostgresStorage } from './storage/pg'
+import { RequestHandler } from 'express-serve-static-core'
 
 export type { Storage, TgglProxyConfig } from './types'
 export { PostgresStorage } from './storage/pg'
@@ -119,8 +119,8 @@ export const createApp = (
   })
 
   const updateConfig = async (
-    previousConfig: Map<string, any> | null,
-    newConfig: Map<string, any>,
+    previousConfig: TgglConfig | null,
+    newConfig: TgglConfig,
     syncDate: Date,
     source?: string
   ) => {
@@ -191,7 +191,7 @@ export const createApp = (
 
   let lastSuccessfulSync: Date | null = null
   const fetchConfig = async (): Promise<boolean> => {
-    const previousConfig = lastSuccessfulSync
+    const previousConfig: TgglConfig | null = lastSuccessfulSync
       ? new Map(client.getConfig())
       : null
     const result = await client
@@ -342,7 +342,7 @@ export const createApp = (
     await poll()
   })
 
-  app.post(path, async (req, res) => {
+  const checkApiKeyMiddleware: RequestHandler = (req, res, next) => {
     if (rejectUnauthorized) {
       if (!clientApiKeys.length) {
         res.status(401).json({ error: allRequestsRejected })
@@ -355,6 +355,10 @@ export const createApp = (
       }
     }
 
+    next()
+  }
+
+  app.post(path, checkApiKeyMiddleware, async (req, res) => {
     await ready
 
     if (Array.isArray(req.body)) {
@@ -411,16 +415,21 @@ export const createApp = (
   }
 
   if (reportPath && reportPath !== 'false') {
-    const aggregator = new ReportingAggregator({ apiKey: apiKey as string })
+    const aggregator = new TgglReporting({
+      apiKey: apiKey as string,
+      reportInterval: 5000,
+    })
 
-    app.post(reportPath, async (req, res) => {
-      aggregator.ingestReport(req.body)
+    app.post(reportPath, checkApiKeyMiddleware, async (req, res) => {
+      aggregator.mergeReport(req.body)
       res.send({ success: true })
     })
   }
 
   if (configPath && configPath !== 'false') {
-    app.get(configPath, async (req, res) => {
+    app.get(configPath, checkApiKeyMiddleware, async (req, res) => {
+      await ready
+
       res.send([...client.getConfig().values()])
     })
   }

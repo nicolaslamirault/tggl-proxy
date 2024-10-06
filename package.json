@@ -46,7 +46,7 @@
     "pg": "^8.11.3",
     "prom-client": "^15.1.0",
     "redis": "^4.6.12",
-    "tggl-client": "^1.15.5",
+    "tggl-client": "^1.16.0",
     "winston": "^3.13.0"
   },
   "files": [
