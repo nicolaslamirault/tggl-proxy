@@ -29,6 +29,7 @@ export type TgglProxyConfig = {
   storages?: Storage[]
   path?: string
   reportPath?: string
+  configPath?: string
   healthCheckPath?: string
   metricsPath?: string
   pollingInterval?: number

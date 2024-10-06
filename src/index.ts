@@ -46,6 +46,8 @@ export const createApp = (
     path = stripSpecialCharacters(process.env.TGGL_PROXY_PATH) ?? '/flags',
     reportPath = stripSpecialCharacters(process.env.TGGL_REPORT_PATH) ??
       '/report',
+    configPath = stripSpecialCharacters(process.env.TGGL_CONFIG_PATH) ??
+      '/config',
     healthCheckPath = stripSpecialCharacters(
       process.env.TGGL_HEALTH_CHECK_PATH
     ) ?? '/health',
@@ -414,6 +416,12 @@ export const createApp = (
     app.post(reportPath, async (req, res) => {
       aggregator.ingestReport(req.body)
       res.send({ success: true })
+    })
+  }
+
+  if (configPath && configPath !== 'false') {
+    app.get(configPath, async (req, res) => {
+      res.send([...client.getConfig().values()])
     })
   }
 
