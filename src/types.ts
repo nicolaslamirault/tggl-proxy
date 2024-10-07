@@ -19,6 +19,11 @@ export interface Storage {
    * If the storage is unavailable this method should throw an Error
    */
   setConfig(config: string, syncDate: Date): Promise<void>
+
+  /**
+   * This method is called to close the storage connection.
+   */
+  close?(): Promise<void> | void
 }
 
 export type TgglProxyConfig = {

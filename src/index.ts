@@ -87,6 +87,19 @@ export const createApp = (
       process.env.REDIS_URL ? new RedisStorage(process.env.REDIS_URL) : null,
     ].filter(Boolean) as Storage[])
 
+  app.on('close', (done: any) => {
+    done(async () => {
+      for (const storage of storages) {
+        try {
+          await storage.close?.()?.catch(() => null)
+        } catch (error) {
+          // Ignore
+        }
+        logger.info(`${storage.name} storage closed`)
+      }
+    })
+  })
+
   const client = new TgglLocalClient(apiKey as string, {
     url,
     log: false,
@@ -332,10 +345,18 @@ export const createApp = (
     return resolve()
   })
 
+  let lastTimeout: NodeJS.Timeout | null = null
+
   const poll = async () => {
     await fetchConfig()
-    setTimeout(poll, pollingInterval)
+    lastTimeout = setTimeout(poll, pollingInterval)
   }
+
+  app.on('close', () => {
+    if (lastTimeout) {
+      clearTimeout(lastTimeout)
+    }
+  })
 
   ready.then(async () => {
     logger?.info('Start polling for config updates', { pollingInterval })
@@ -418,6 +439,10 @@ export const createApp = (
     const aggregator = new TgglReporting({
       apiKey: apiKey as string,
       reportInterval: 5000,
+    })
+
+    app.on('close', () => {
+      aggregator.disable()
     })
 
     app.post(reportPath, checkApiKeyMiddleware, async (req, res) => {

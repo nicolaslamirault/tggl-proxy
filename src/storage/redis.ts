@@ -87,4 +87,8 @@ export class RedisStorage implements Storage {
       )
     }
   }
+
+  async close() {
+    await this.client.disconnect()
+  }
 }

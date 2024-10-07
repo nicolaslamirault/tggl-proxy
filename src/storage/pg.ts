@@ -126,4 +126,8 @@ export class PostgresStorage implements Storage {
       )
     }
   }
+
+  async close() {
+    await this.client.end()
+  }
 }
