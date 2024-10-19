@@ -34,13 +34,17 @@ jobs:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
 
-#      - name: Build and push Docker image
-#        run: |
-#          docker buildx build . \
-#            --platform linux/amd64,linux/arm64 \
-#            -t tggl/tggl-proxy:2.1.2 \
-#            -t tggl/tggl-proxy:latest \
-#            --push
+      - name: Get version from package.json
+        id: get_version
+        run: echo "VERSION=$(jq -r '.version' package.json)" >> $GITHUB_ENV
+
+      - name: Build and push Docker image
+        run: |
+          docker buildx build . \
+            --platform linux/amd64,linux/arm64 \
+            -t tggl/tggl-proxy:${{ env.VERSION }} \
+            -t tggl/tggl-proxy:latest \
+            --push
 
       - name: Publish README to Docker Hub
         run: |
