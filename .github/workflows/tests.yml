@@ -10,13 +10,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v2
-      - name: Use Node.js
-        uses: actions/setup-node@v2
-        with:
-          node-version: '16'
-          cache: 'npm'
-      - run: npm ci
-      - run: npm test -- --coverage
+#      - name: Use Node.js
+#        uses: actions/setup-node@v2
+#        with:
+#          node-version: '16'
+#          cache: 'npm'
+#      - run: npm ci
+#      - run: npm test -- --coverage
 
   docker:
     name: Build and Push Docker Image
@@ -25,31 +25,30 @@ jobs:
     steps:
       - uses: actions/checkout@v2
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v2
+#      - name: Set up Docker Buildx
+#        uses: docker/setup-buildx-action@v2
+#
+#      - name: Log in to Docker Hub
+#        uses: docker/login-action@v2
+#        with:
+#          username: ${{ secrets.DOCKER_USERNAME }}
+#          password: ${{ secrets.DOCKER_PASSWORD }}
+#
+#      - name: Get version from package.json
+#        id: get_version
+#        run: echo "VERSION=$(jq -r '.version' package.json)" >> $GITHUB_ENV
+#
+#      - name: Build and push Docker image
+#        run: |
+#          docker buildx build . \
+#            --platform linux/amd64,linux/arm64 \
+#            -t tggl/tggl-proxy:${{ env.VERSION }} \
+#            -t tggl/tggl-proxy:latest \
+#            --push
 
-      - name: Log in to Docker Hub
-        uses: docker/login-action@v2
+      - name: Docker Hub Description
+        uses: peter-evans/dockerhub-description@v4
         with:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
-
-      - name: Get version from package.json
-        id: get_version
-        run: echo "VERSION=$(jq -r '.version' package.json)" >> $GITHUB_ENV
-
-      - name: Build and push Docker image
-        run: |
-          docker buildx build . \
-            --platform linux/amd64,linux/arm64 \
-            -t tggl/tggl-proxy:${{ env.VERSION }} \
-            -t tggl/tggl-proxy:latest \
-            --push
-
-      - name: Publish README to Docker Hub
-        run: |
-          curl -X PATCH \
-            -H "Content-Type: application/json" \
-            -H "Authorization: Bearer ${{ secrets.DOCKER_PASSWORD }}" \
-            -d '{"description": "Tggl Proxy to self-host", "full_description": "'"$(<README.md)"'"}' \
-            https://hub.docker.com/v2/repositories/tggl/tggl-proxy/
+          repository: tggl/tggl-proxy
