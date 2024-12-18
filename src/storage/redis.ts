@@ -23,6 +23,8 @@ export class RedisStorage implements Storage {
   private client: RedisClientType
   private ready: Promise<void>
   public name = 'Redis'
+  private status: 'starting' | 'ready' | 'error' = 'starting'
+  private error: Error | null = null
 
   constructor(private connectionString: string) {
     this.ready = this.init()
@@ -34,7 +36,16 @@ export class RedisStorage implements Storage {
       this.client = createClient({
         url: this.connectionString,
       })
-      await this.client.connect()
+
+      await this.client
+        .on('error', (error) => {
+          this.status = 'error'
+          this.error = error
+        })
+        .on('ready', () => {
+          this.status = 'ready'
+        })
+        .connect()
     } catch (error) {
       throw new RedisError(
         'FAILED_TO_CONNECT',
@@ -44,9 +55,25 @@ export class RedisStorage implements Storage {
     }
   }
 
+  private async waitForConnection() {
+    if (this.status === 'error') {
+      throw this.error
+    }
+
+    await Promise.race([
+      this.ready,
+      new Promise((_, reject) =>
+        setTimeout(
+          () => reject(this.error ?? new Error('Not responding')),
+          2000
+        )
+      ),
+    ])
+  }
+
   async getConfig() {
     try {
-      await this.ready
+      await this.waitForConnection()
 
       const data = await this.client.hGetAll('tggl_config')
 
@@ -69,7 +96,7 @@ export class RedisStorage implements Storage {
 
   async setConfig(config: string, syncDate: Date) {
     try {
-      await this.ready
+      await this.waitForConnection()
 
       const lastSyncDate = await this.client.hGet('tggl_config', 'syncDate')
 
