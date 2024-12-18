@@ -1,4 +1,4 @@
-import { Client } from 'pg'
+import { Pool, PoolClient } from 'pg'
 import { Storage } from '../types'
 
 export type PostgresErrorCode =
@@ -20,29 +20,30 @@ export class PostgresError extends Error {
 }
 
 export class PostgresStorage implements Storage {
-  private client: Client
-  private ready: Promise<void>
+  private client: Pool
   public name = 'Postgres'
 
   constructor(connectionString: string) {
-    this.client = new Client({ connectionString })
-    this.ready = this.init()
-    this.ready.catch(() => null)
+    this.client = new Pool({
+      connectionString,
+      statement_timeout: 5_000,
+      max: 1,
+    })
+
+    this.client.on('connect', async (client) => {
+      await this.init(client)
+    })
+
+    this.client.on('error', (error) => {
+      console.error(
+        'error: Postgres error, will try to reconnect: ' + error.message
+      )
+    })
   }
 
-  private async init() {
+  private async init(client: PoolClient) {
     try {
-      await this.client.connect()
-    } catch (error) {
-      throw new PostgresError(
-        'FAILED_TO_CONNECT',
-        'Failed to connect to Postgres',
-        error as Error
-      )
-    }
-
-    try {
-      await this.client.query(
+      await client.query(
         `CREATE TABLE IF NOT EXISTS tggl_config (key TEXT PRIMARY KEY, value TEXT);`
       )
     } catch (error) {
@@ -56,8 +57,6 @@ export class PostgresStorage implements Storage {
 
   async getConfig() {
     try {
-      await this.ready
-
       const result = await this.client.query(
         `SELECT "key", "value"
          FROM "tggl_config"
@@ -97,7 +96,6 @@ export class PostgresStorage implements Storage {
 
   async setConfig(config: string, syncDate: Date) {
     try {
-      await this.ready
       await this.client.query('BEGIN;')
       const result = await this.client.query(
         `SELECT value FROM "tggl_config" WHERE "key" = 'syncDate' FOR UPDATE;`
