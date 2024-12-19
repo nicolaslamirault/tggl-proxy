@@ -8,11 +8,13 @@ import { Storage, TgglProxyConfig } from './types'
 import winston from 'winston'
 import { RedisStorage } from './storage/redis'
 import { PostgresStorage } from './storage/pg'
+import { S3Storage } from './storage/s3'
 import { RequestHandler } from 'express-serve-static-core'
 
 export type { Storage, TgglProxyConfig } from './types'
 export { PostgresStorage } from './storage/pg'
 export { RedisStorage } from './storage/redis'
+export { S3Storage } from './storage/s3'
 
 promClient.collectDefaultMetrics()
 
@@ -78,6 +80,18 @@ export const createApp = (
   }: TgglProxyConfig = {},
   app: Application = express()
 ) => {
+  const s3EnvVars = [
+    process.env.S3_ACCESS_KEY_ID,
+    process.env.S3_BUCKET_NAME,
+    process.env.S3_REGION,
+    process.env.S3_SECRET_ACCESS_KEY,
+  ]
+  if (s3EnvVars.some(Boolean) && !s3EnvVars.every(Boolean)) {
+    logger?.error(
+      'S3_ACCESS_KEY_ID, S3_BUCKET_NAME, S3_REGION, and S3_SECRET_ACCESS_KEY must all be set for S3 storage to work'
+    )
+  }
+
   const storages =
     rawStorages ??
     ([
@@ -85,6 +99,16 @@ export const createApp = (
         ? new PostgresStorage(process.env.POSTGRES_URL)
         : null,
       process.env.REDIS_URL ? new RedisStorage(process.env.REDIS_URL) : null,
+      process.env.S3_ACCESS_KEY_ID &&
+      process.env.S3_SECRET_ACCESS_KEY &&
+      process.env.S3_BUCKET_NAME
+        ? new S3Storage({
+            accessKeyId: process.env.S3_ACCESS_KEY_ID,
+            bucketName: process.env.S3_BUCKET_NAME,
+            region: process.env.S3_REGION,
+            secretAccessKey: process.env.S3_SECRET_ACCESS_KEY,
+          })
+        : null,
     ].filter(Boolean) as Storage[])
 
   app.on('close', (done: any) => {
