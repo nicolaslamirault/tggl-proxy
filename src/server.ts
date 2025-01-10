@@ -7,11 +7,7 @@ const logger = winston.createLogger({
     winston.format.timestamp(),
     winston.format.json()
   ),
-  transports: [
-    new winston.transports.Console({
-      format: winston.format.simple(),
-    }),
-  ],
+  transports: [new winston.transports.Console()],
 })
 
 const app = createApp({ logger })
