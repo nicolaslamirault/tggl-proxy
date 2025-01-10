@@ -1,6 +1,6 @@
 {
   "name": "tggl-proxy",
-  "version": "2.2.0",
+  "version": "2.3.0",
   "description": "Tggl Proxy to self-host",
   "keywords": [
     "Tggl",
@@ -25,7 +25,7 @@
     "prepare": "husky install",
     "version": "node scripts/syncVersion.mjs && npm run format && git add -A src",
     "postversion": "git push && git push --tags",
-    "publishDocker": "docker buildx build . --platform linux/amd64,linux/arm64 -t tggl/tggl-proxy:2.2.0 -t tggl/tggl-proxy:latest --push"
+    "publishDocker": "docker buildx build . --platform linux/amd64,linux/arm64 -t tggl/tggl-proxy:2.3.0 -t tggl/tggl-proxy:latest --push"
   },
   "lint-staged": {
     "**/*": "prettier --write --ignore-unknown"
