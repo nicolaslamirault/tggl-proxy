@@ -417,7 +417,9 @@ export const createApp = (
         ? Date.now() - lastSuccessfulSync.getTime()
         : null
 
-      if (!configAge || configAge > maxConfigAge) {
+      res.setHeader('Cache-Control', 'no-cache')
+
+      if (maxConfigAge > 0 && (!configAge || configAge > maxConfigAge)) {
         res
           .status(503)
           .send(
