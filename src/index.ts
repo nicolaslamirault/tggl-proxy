@@ -10,6 +10,7 @@ import { RedisStorage } from './storage/redis'
 import { PostgresStorage } from './storage/pg'
 import { S3Storage } from './storage/s3'
 import { RequestHandler } from 'express-serve-static-core'
+import requestIp from 'request-ip'
 
 export type { Storage, TgglProxyConfig } from './types'
 export { PostgresStorage } from './storage/pg'
@@ -402,10 +403,20 @@ export const createApp = (
   app.post(path, checkApiKeyMiddleware, async (req, res) => {
     await ready
 
+    const defaultContext = {
+      timestamp: Date.now(),
+      ip: requestIp.getClientIp(req),
+      referer: req.headers.referer,
+    }
+
     if (Array.isArray(req.body)) {
-      res.send(req.body.map((context) => client.getActiveFlags(context)))
+      res.send(
+        req.body.map((context) =>
+          client.getActiveFlags({ ...defaultContext, ...context })
+        )
+      )
     } else {
-      res.send(client.getActiveFlags(req.body))
+      res.send(client.getActiveFlags({ ...defaultContext, ...req.body }))
     }
   })
 
