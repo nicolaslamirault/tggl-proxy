@@ -19,6 +19,54 @@ export { S3Storage } from './storage/s3'
 
 promClient.collectDefaultMetrics()
 
+const namespaceMetrics = "tggl_proxy_"
+
+// Custom Prometheus metrics
+const httpRequestDuration = new promClient.Histogram({
+  name: namespaceMetrics + 'http_request_duration_seconds',
+  help: 'Duration of HTTP requests in seconds',
+  labelNames: ['method', 'route', 'status_code'],
+  buckets: [0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1, 5, 10]
+})
+
+const httpRequestsTotal = new promClient.Counter({
+  name: namespaceMetrics + 'http_requests_total',
+  help: 'Total number of HTTP requests',
+  labelNames: ['method', 'route', 'status_code']
+})
+
+const apiKeyValidationAttempts = new promClient.Counter({
+  name: namespaceMetrics + 'api_key_validation_attempts_total',
+  help: 'Total number of API key validation attempts',
+  labelNames: ['result'] // 'success', 'failure', 'skipped'
+})
+
+const configSyncOperations = new promClient.Counter({
+  name: namespaceMetrics + 'config_sync_operations_total',
+  help: 'Total number of config sync operations',
+  labelNames: ['source', 'result'] // source: 'api', 'redis', 'postgres', 's3'; result: 'success', 'failure'
+})
+
+const configSyncDuration = new promClient.Histogram({
+  name: namespaceMetrics + 'config_sync_duration_seconds',
+  help: 'Duration of config sync operations in seconds',
+  labelNames: ['source'],
+  buckets: [0.1, 0.5, 1, 2, 5, 10, 30]
+})
+
+const storageOperations = new promClient.Counter({
+  name: namespaceMetrics + 'storage_operations_total',
+  help: 'Total number of storage operations',
+  labelNames: ['storage', 'operation', 'result'] // operation: 'get', 'set'; result: 'success', 'failure'
+})
+
+const flagEvaluations = new promClient.Counter({
+  name: namespaceMetrics + 'flag_evaluations_total',
+  help: 'Total number of flag evaluations',
+  labelNames: ['type'] // 'single', 'batch'
+})
+
+
 const allRequestsRejected =
   'rejectUnauthorized is set to true but no clientApiKeys is provided, all requests will end in a 401. ' +
   'Either set rejectUnauthorized to false or provide a list of clientApiKeys. ' +
@@ -126,6 +174,15 @@ export const createApp = (
     log: false,
   })
 
+  // Active flags metric that depends on the client
+  const activeFlags = new promClient.Gauge({
+    name: 'active_flags_count',
+    help: 'Number of active flags in the current configuration',
+    collect() {
+      this.set(client.getConfig().size)
+    }
+  })
+
   if (rejectUnauthorized && !clientApiKeys.length) {
     logger?.error(allRequestsRejected)
   }
@@ -139,9 +196,29 @@ export const createApp = (
 
     res.on('finish', () => {
       const diff = process.hrtime(start)
-      const duration = Number((diff[0] * 1e3 + diff[1] * 1e-6).toFixed(2))
+      const durationMs = Number((diff[0] * 1e3 + diff[1] * 1e-6).toFixed(2))
+      const durationSeconds = durationMs / 1000
+
+      // Determine route for metrics
+      let route = req.originalUrl
+      if (req.originalUrl === path) route = '/flags'
+      else if (req.originalUrl === healthCheckPath) route = '/health'
+      else if (req.originalUrl === metricsPath) route = '/metrics'
+      else if (req.originalUrl === reportPath) route = '/report'
+      else if (req.originalUrl === configPath) route = '/config'
+      else route = 'unknown'
+
+      // Record HTTP metrics
+      httpRequestDuration
+        .labels(req.method, route, res.statusCode.toString())
+        .observe(durationSeconds)
+      
+      httpRequestsTotal
+        .labels(req.method, route, res.statusCode.toString())
+        .inc()
+
       logger?.info('Request', {
-        duration,
+        duration: durationMs,
         method: req.method,
         url: req.originalUrl,
         status: res.statusCode,
@@ -205,6 +282,9 @@ export const createApp = (
           .then(() => ({ success: true as const }))
           .catch((error) => ({ success: false as const, error }))
 
+        // Record storage operation metrics
+        storageOperations.labels(storage.name, 'set', result.success ? 'success' : 'failure').inc()
+
         if (result.success) {
           logger?.info(
             `Successfully saved config and sync date to ${storage.name}`
@@ -228,12 +308,19 @@ export const createApp = (
     const previousConfig: TgglConfig | null = lastSuccessfulSync
       ? new Map(client.getConfig())
       : null
+    
+    // Track API sync timing
+    const apiSyncStart = Date.now()
     const result = await client
       .fetchConfig()
       .then((config) => ({ success: true as const, config }))
       .catch((error) => ({ success: false as const, error }))
+    
+    const apiSyncDuration = (Date.now() - apiSyncStart) / 1000
+    configSyncDuration.labels('api').observe(apiSyncDuration)
 
     if (result.success) {
+      configSyncOperations.labels('api', 'success').inc()
       logger?.info('Successfully fetched config from API')
       lastSuccessfulSync = new Date()
 
@@ -241,6 +328,7 @@ export const createApp = (
       return true
     }
 
+    configSyncOperations.labels('api', 'failure').inc()
     logger?.error('Failed to fetch config from API', {
       error: formatError(result.error),
     })
@@ -248,6 +336,8 @@ export const createApp = (
     for (const storage of storages) {
       logger?.info(`Falling back to ${storage.name} storage`)
 
+      // Track storage sync timing
+      const storageSyncStart = Date.now()
       const config = await storage
         .getConfig()
         .then((config) => {
@@ -270,7 +360,12 @@ export const createApp = (
         })
         .catch((error) => ({ success: false as const, error }))
 
+      const storageSyncDuration = (Date.now() - storageSyncStart) / 1000
+      configSyncDuration.labels(storage.name).observe(storageSyncDuration)
+      storageOperations.labels(storage.name, 'get', config.success ? 'success' : 'failure').inc()
+
       if (config.success) {
+        configSyncOperations.labels(storage.name, 'success').inc()
         if (
           !lastSuccessfulSync ||
           config.config.syncDate > lastSuccessfulSync
@@ -301,6 +396,7 @@ export const createApp = (
           )
         }
       } else {
+        configSyncOperations.labels(storage.name, 'failure').inc()
         logger?.error(`Failed to fetch config from ${storage.name}`, {
           error: formatError(config.error),
         })
@@ -387,14 +483,20 @@ export const createApp = (
   const checkApiKeyMiddleware: RequestHandler = (req, res, next) => {
     if (rejectUnauthorized) {
       if (!clientApiKeys.length) {
+        apiKeyValidationAttempts.labels('failure').inc()
         res.status(401).json({ error: allRequestsRejected })
         return
       }
 
       if (!clientApiKeys.includes(req.header('x-tggl-api-key') as string)) {
+        apiKeyValidationAttempts.labels('failure').inc()
         res.status(401).json({ error: 'Unauthorized' })
         return
       }
+
+      apiKeyValidationAttempts.labels('success').inc()
+    } else {
+      apiKeyValidationAttempts.labels('skipped').inc()
     }
 
     next()
@@ -410,12 +512,14 @@ export const createApp = (
     }
 
     if (Array.isArray(req.body)) {
+      flagEvaluations.labels('batch').inc()
       res.send(
         req.body.map((context) =>
           client.getActiveFlags({ ...defaultContext, ...context })
         )
       )
     } else {
+      flagEvaluations.labels('single').inc()
       res.send(client.getActiveFlags({ ...defaultContext, ...req.body }))
     }
   })
